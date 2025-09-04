@@ -11,6 +11,8 @@ router.get('/google',
 );
 
 // Rota 2: O Callback. O Google redireciona para cá após o login.
+const FRONT_URL = process.env.FRONT_URL ||'http://localhost:3000';
+
 router.get('/google/callback', 
   // Passport processa o código e executa a função de verificação que configuramos
   passport.authenticate('google', { session: false, failureRedirect: '/login-failed' }), // session: false para API
@@ -29,7 +31,7 @@ router.get('/google/callback',
     // Redireciona o usuário para uma página no frontend, passando o token
     // O frontend será responsável por ler o token da URL e salvá-lo.
     // Em produção, use uma URL do seu frontend.
-    res.redirect(`http://localhost:3000/auth-success?token=${token}`);
+    res.redirect(`${FRONT_URL}/auth-success?token=${token}`);
   }
 );
 

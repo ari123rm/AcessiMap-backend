@@ -1,18 +1,15 @@
-const pool = require('../../config/db');
+const { pool } = require('../../config/db');
 
 /**
  * Busca todos os tipos de estabelecimentos cadastrados.
  * @returns {Promise<Array>} Uma lista de todos os tipos.
  */
 async function getAllTipos() {
-  const connection = await pool.getConnection();
-  try {
-    const sql = "SELECT * FROM Tipos ORDER BY nome ASC";
-    const [rows] = await connection.execute(sql);
-    return rows;
-  } finally {
-    if (connection) connection.release();
-  }
+  // Para uma única consulta, podemos usar pool.query() diretamente.
+  // A biblioteca 'pg' gerencia o 'pegar e devolver' da conexão para nós.
+  const sql = 'SELECT * FROM "Tipos" ORDER BY nome ASC';
+  const { rows } = await pool.query(sql);
+  return rows;
 }
 
 module.exports = {

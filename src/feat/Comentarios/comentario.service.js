@@ -1,19 +1,31 @@
-const pool = require('../../config/db');
-const axios = require('axios');
-// Renomeamos a função para refletir sua nova capacidade
+const { pool } = require('../../config/db');
+
+/**
+ * Cria um novo comentário ou atualiza um existente do mesmo usuário
+ * para o mesmo estabelecimento.
+ * @returns {Promise<object>} O objeto do comentário criado ou atualizado.
+ */
 async function upsertComentario(id_usuario, id_estabelecimento, comentario) {
-  const sql = `
-    INSERT INTO Comentarios (id_usuario, id_estabelecimento, comentario) 
-    VALUES (?, ?, ?)
-    ON DUPLICATE KEY UPDATE comentario = VALUES(comentario);
-  `;
-  const [result] = await pool.execute(sql, [id_usuario, id_estabelecimento, comentario]);
-  
-  // Busca o comentário recém-criado ou atualizado para retornar o objeto completo
-  // Usamos um truque para pegar o ID correto tanto no INSERT quanto no UPDATE
-  const id = result.insertId || (await pool.execute('SELECT id FROM Comentarios WHERE id_usuario = ? AND id_estabelecimento = ?', [id_usuario, id_estabelecimento]))[0][0].id;
-  const [rows] = await pool.execute('SELECT * FROM Comentarios WHERE id = ?', [id]);
-  return rows[0];
+  try {
+    // Esta única query faz tudo: insere, ou se houver conflito na chave única
+    // (id_usuario, id_estabelecimento), ele atualiza o comentário.
+    // O "RETURNING *" nos devolve a linha completa, seja ela nova ou atualizada.
+    const sql = `
+      INSERT INTO "Comentarios" (id_usuario, id_estabelecimento, comentario) 
+      VALUES ($1, $2, $3)
+      ON CONFLICT (id_usuario, id_estabelecimento) 
+      DO UPDATE SET comentario = EXCLUDED.comentario
+      RETURNING *;
+    `;
+
+    const { rows } = await pool.query(sql, [id_usuario, id_estabelecimento, comentario]);
+    
+    return rows[0];
+
+  } catch (error) {
+    console.error("Erro ao criar ou atualizar comentário:", error);
+    throw new Error("Não foi possível salvar o comentário.");
+  }
 }
 
 module.exports = { upsertComentario };

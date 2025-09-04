@@ -7,7 +7,8 @@ const cors = require('cors');
 const swaggerUi = require('swagger-ui-express');
 const { specs } = require('./config/swagger'); // Importa nossa configuração
 // Configuração do Passport
-require('./config/passport'); 
+require('./config/passport');
+const { checkConnection } = require('./config/db'); 
 
 // Os caminhos para as rotas agora incluem a pasta "feat"
 const categoriaRoutes = require('./feat/Categorias_Acessibilidade/categoria.routes');
@@ -49,6 +50,15 @@ app.use('/api/auth', authRoutes);
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(specs));
 
 
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-});
+const startServer = async () => {
+  // Primeiro, verifica a conexão com o banco
+  await checkConnection();
+
+  // Se a conexão for bem-sucedida, inicia o servidor Express
+  app.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
+  });
+};
+
+// 3. Inicia o processo
+startServer();

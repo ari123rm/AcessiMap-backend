@@ -1,19 +1,14 @@
-const pool = require('../../config/db');
+const { pool } = require('../../config/db');
 const axios = require('axios');
 
 // --- FUNÇÕES AJUDANTES (HELPERS) ---
-/**
- * Busca um estabelecimento no DB. Se não encontrar, busca no Google e o cria.
- * @param {object} connection - A conexão ativa com o banco de dados.
- * @param {string} googlePlaceId - O ID do Google Places.
- * @returns {Promise<object>} O objeto do estabelecimento (com uma flag 'isNew' se for novo).
- */
+
 async function _findOrCreateEstablishment(connection, googlePlaceId) {
   const sqlSelect = `
     SELECT id, nome, endereco, google_place_id, photo_reference,
-           ST_Y(localizacao) as latitude, ST_X(localizacao) as longitude 
-    FROM Estabelecimentos WHERE google_place_id = ?`;
-  let [rows] = await connection.execute(sqlSelect, [googlePlaceId]);
+           ST_Y(localizacao::geometry) as latitude, ST_X(localizacao::geometry) as longitude 
+    FROM "Estabelecimentos" WHERE google_place_id = $1`;
+  let { rows } = await connection.query(sqlSelect, [googlePlaceId]);
 
   if (rows.length > 0) {
     return rows[0];
@@ -23,24 +18,22 @@ async function _findOrCreateEstablishment(connection, googlePlaceId) {
   const googleApiUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${googlePlaceId}&fields=name,formatted_address,geometry,photos,types&key=${process.env.GOOGLE_API_KEY}&language=pt-BR`;
   const response = await axios.get(googleApiUrl);
   const placeDetails = response.data.result;
-
-  if (!placeDetails) {
-    throw new Error('Detalhes do lugar não encontrados no Google.');
-  }
+  if (!placeDetails) throw new Error('Detalhes do lugar não encontrados no Google.');
 
   const { name, formatted_address, geometry, types } = placeDetails;
   const { lat, lng } = geometry.location;
   const photoRef = placeDetails.photos?.[0]?.photo_reference || null;
   
-  await connection.beginTransaction();
+  await connection.query('BEGIN');
   try {
-    // Insere o estabelecimento principal
-    const sqlInsert = `INSERT INTO Estabelecimentos (google_place_id, nome, endereco, localizacao, photo_reference) VALUES (?, ?, ?, ST_GeomFromText(?), ?)`;
-    const point = `POINT(${lng} ${lat})`;
-    const [result] = await connection.execute(sqlInsert, [googlePlaceId, name, formatted_address, point, photoRef]);
-    const estabelecimentoId = result.insertId;
+    const sqlInsert = `
+      INSERT INTO "Estabelecimentos" (google_place_id, nome, endereco, localizacao, photo_reference) 
+      VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326), $6) 
+      RETURNING id;
+    `;
+    const result = await connection.query(sqlInsert, [googlePlaceId, name, formatted_address, lng, lat, photoRef]);
+    const estabelecimentoId = result.rows[0].id;
 
-    // --- LÓGICA CORRIGIDA PARA MÚLTIPLOS TIPOS ---
     if (types && types.length > 0) {
       // Este mapa de tradução agora está preenchido
       const priorityTypes = {
@@ -64,78 +57,35 @@ async function _findOrCreateEstablishment(connection, googlePlaceId) {
 
       const nossosTipos = new Set();
       for (const googleType of types) {
-        if (priorityTypes[googleType]) {
-          nossosTipos.add(priorityTypes[googleType]);
-        }
+        if (priorityTypes[googleType]) nossosTipos.add(priorityTypes[googleType]);
       }
-
-      console.log('Tipos do Google:', types, '-> Tipos traduzidos:', [...nossosTipos]);
-
       for (const tipoNome of nossosTipos) {
-        await connection.execute(
-          'INSERT INTO Tipos (nome) VALUES (?) ON DUPLICATE KEY UPDATE nome=nome',
-          [tipoNome]
-        );
-        const [tipoRows] = await connection.execute('SELECT id FROM Tipos WHERE nome = ?', [tipoNome]);
-        const tipoId = tipoRows[0].id;
-
-        await connection.execute(
-          'INSERT INTO Estabelecimento_Tipos (id_estabelecimento, id_tipo) VALUES (?, ?)',
-          [estabelecimentoId, tipoId]
-        );
+        await connection.query('INSERT INTO "Tipos" (nome) VALUES ($1) ON CONFLICT (nome) DO NOTHING', [tipoNome]);
+        const tipoResult = await connection.query('SELECT id FROM "Tipos" WHERE nome = $1', [tipoNome]);
+        const tipoId = tipoResult.rows[0].id;
+        await connection.query('INSERT INTO "Estabelecimento_Tipos" (id_estabelecimento, id_tipo) VALUES ($1, $2)', [estabelecimentoId, tipoId]);
       }
     }
-
-    await connection.commit();
-
-    // Busca os tipos que acabamos de inserir para retornar ao frontend
-    const sqlTipos = `
-      SELECT t.nome FROM Tipos t
-      JOIN Estabelecimento_Tipos et ON t.id = et.id_tipo
-      WHERE et.id_estabelecimento = ?`;
-    const [tiposRows] = await connection.execute(sqlTipos, [estabelecimentoId]);
-    const tipos = tiposRows.map(row => row.nome);
-
-    const photoUrl = photoRef
-      ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${photoRef}&key=${process.env.GOOGLE_API_KEY}`
-      : null;
+    await connection.query('COMMIT');
     
-    // Retorna o objeto completo para o frontend
-    return {
-      id: estabelecimentoId,
-      google_place_id: googlePlaceId,
-      nome: name,
-      endereco: formatted_address,
-      latitude: lat,
-      longitude: lng,
-      photoUrl,
-      tipos: tipos, // Inclui os tipos recém-criados
-      scores: [],
-      totalAvaliacoes: 0,
-      avaliacoesDetalhes: [],
-      comentarios: [],
-      isNew: true,
-    };
+    const { rows: finalRows } = await connection.query(sqlSelect, [googlePlaceId]);
+    return { ...finalRows[0], isNew: true };
 
   } catch (error) {
-    await connection.rollback();
+    await connection.query('ROLLBACK');
     console.error("Erro na transação de criação de estabelecimento:", error);
     throw error;
   }
 }
 
-/**
- * Calcula os scores objetivos (checklist) e agrega os dados para o tooltip.
- * @returns {Promise<{scoresFinais: Array, itemReviews: Array, aggregatedChecklist: Object}>}
- */
 async function _getChecklistData(connection, estabelecimentoId) {
   const sql = `
     SELECT ia.id_categoria, ca.nome as nome_categoria, ia.peso, av.possui_item, ia.nome as nome_item
-    FROM Avaliacoes_Usuarios av
-    JOIN Itens_Acessibilidade ia ON av.id_item_acessibilidade = ia.id
-    JOIN Categorias_Acessibilidade ca ON ia.id_categoria = ca.id
-    WHERE av.id_estabelecimento = ?`;
-  const [itemReviews] = await connection.execute(sql, [estabelecimentoId]);
+    FROM "Avaliacoes_Usuarios" av
+    JOIN "Itens_Acessibilidade" ia ON av.id_item_acessibilidade = ia.id
+    JOIN "Categorias_Acessibilidade" ca ON ia.id_categoria = ca.id
+    WHERE av.id_estabelecimento = $1`;
+  const { rows: itemReviews } = await connection.query(sql, [estabelecimentoId]);
 
   const scoresPorCategoria = {};
   const aggregatedChecklist = {};
@@ -192,10 +142,8 @@ async function _getChecklistData(connection, estabelecimentoId) {
  * @returns {Promise<Array>}
  */
 async function _getCommunityRatings(connection, estabelecimentoId) {
-  const sql = `
-    SELECT id_categoria, AVG(nota) as media_nota FROM Avaliacoes_Categorias
-    WHERE id_estabelecimento = ? GROUP BY id_categoria`;
-  const [rows] = await connection.execute(sql, [estabelecimentoId]);
+  const sql = `SELECT id_categoria, AVG(nota) as media_nota FROM "Avaliacoes_Categorias" WHERE id_estabelecimento = $1 GROUP BY id_categoria`;
+  const { rows } = await connection.query(sql, [estabelecimentoId]);
   return rows;
 }
 
@@ -205,22 +153,12 @@ async function _getCommunityRatings(connection, estabelecimentoId) {
  */
 async function _getComments(connection, estabelecimentoId) {
   const sql = `
-    SELECT 
-      c.id, 
-      c.comentario, 
-      c.criado_em, 
-      u.nome as autor_nome,
-      u.id as autor_id,
-      (SELECT AVG(ac.nota) 
-       FROM Avaliacoes_Categorias ac 
-       WHERE ac.id_usuario = c.id_usuario AND ac.id_estabelecimento = c.id_estabelecimento) as autor_nota_media
-    FROM Comentarios c 
-    JOIN Usuarios u ON c.id_usuario = u.id
-    WHERE c.id_estabelecimento = ? 
-    ORDER BY c.criado_em DESC 
-    LIMIT 10;
-  `;
-  const [rows] = await connection.execute(sql, [estabelecimentoId]);
+    SELECT c.id, c.comentario, c.criado_em, u.nome as autor_nome, u.id as autor_id,
+           (SELECT AVG(ac.nota) FROM "Avaliacoes_Categorias" ac 
+            WHERE ac.id_usuario = c.id_usuario AND ac.id_estabelecimento = c.id_estabelecimento) as autor_nota_media
+    FROM "Comentarios" c JOIN "Usuarios" u ON c.id_usuario = u.id
+    WHERE c.id_estabelecimento = $1 ORDER BY c.criado_em DESC LIMIT 10`;
+  const { rows } = await connection.query(sql, [estabelecimentoId]);
   return rows;
 }
 
@@ -231,37 +169,42 @@ async function _getComments(connection, estabelecimentoId) {
 async function _getTotalReviewers(connection, estabelecimentoId) {
   const sql = `
     SELECT COUNT(DISTINCT id_usuario) as totalAvaliacoes FROM (
-        SELECT id_usuario FROM Avaliacoes_Usuarios WHERE id_estabelecimento = ?
+        SELECT id_usuario FROM "Avaliacoes_Usuarios" WHERE id_estabelecimento = $1
         UNION
-        SELECT id_usuario FROM Avaliacoes_Categorias WHERE id_estabelecimento = ?
+        SELECT id_usuario FROM "Avaliacoes_Categorias" WHERE id_estabelecimento = $1
     ) as usuarios_unicos;`;
-  const [rows] = await connection.execute(sql, [estabelecimentoId, estabelecimentoId]);
-  return rows[0]?.totalAvaliacoes || 0;
+  const { rows } = await connection.query(sql, [estabelecimentoId]);
+  return rows[0]?.totalavaliacoes || 0;
 }
-
 
 
 
 // --- FUNÇÃO PRINCIPAL (ORQUESTRADORA) ---
 
 async function getRankingByPlaceId(googlePlaceId) {
-  const connection = await pool.getConnection();
+const connection = await pool.connect();
   try {
     const estabelecimento = await _findOrCreateEstablishment(connection, googlePlaceId);
 
     if (estabelecimento.isNew) {
       delete estabelecimento.isNew;
-
+      // Precisamos buscar os tipos recém-criados para enviar de volta
+      const sqlTipos = `SELECT t.nome FROM "Tipos" t JOIN "Estabelecimento_Tipos" et ON t.id = et.id_tipo WHERE et.id_estabelecimento = $1`;
+      const { rows: tiposRows } = await connection.query(sqlTipos, [estabelecimento.id]);
+      estabelecimento.tipos = tiposRows.map(row => row.nome);
       return estabelecimento;
     }
 
-    const [checklistData, communityRatings, comments, totalReviewers] = await Promise.all([
+    // Busca os tipos de um estabelecimento já existente
+    const sqlTipos = `SELECT t.nome FROM "Tipos" t JOIN "Estabelecimento_Tipos" et ON t.id = et.id_tipo WHERE et.id_estabelecimento = $1`;
+
+    const [checklistData, communityRatings, comments, totalReviewers, tiposRows] = await Promise.all([
       _getChecklistData(connection, estabelecimento.id),
       _getCommunityRatings(connection, estabelecimento.id),
       _getComments(connection, estabelecimento.id),
       _getTotalReviewers(connection, estabelecimento.id),
+      connection.query(sqlTipos, [estabelecimento.id]) // Adiciona a busca de tipos ao Promise.all
     ]);
-
     const scoresCombinados = checklistData.scoresFinais.map(score => {
       const notaEncontrada = communityRatings.find(n => n.id_categoria === score.id_categoria);
       const checklistTooltipData = checklistData.aggregatedChecklist[score.id_categoria] || {};
@@ -277,18 +220,7 @@ async function getRankingByPlaceId(googlePlaceId) {
       };
     });
 
-    const photoUrl = estabelecimento.photo_reference
-      ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${estabelecimento.photo_reference}&key=${process.env.GOOGLE_API_KEY}`
-      : null;
-      const sqlTipos = `
-        SELECT t.nome FROM Tipos t
-        JOIN Estabelecimento_Tipos et ON t.id = et.id_tipo
-        WHERE et.id_estabelecimento = ?
-      `;
-      const [tiposRows] = await connection.execute(sqlTipos, [estabelecimento.id]);
-      // Mapeia o resultado para um array de strings
-      const tipos = tiposRows.map(row => row.nome);
-
+    const photoUrl = estabelecimento.photo_reference ? `...` : null;
 
     return {
       ...estabelecimento,
@@ -297,9 +229,8 @@ async function getRankingByPlaceId(googlePlaceId) {
       scores: scoresCombinados,
       avaliacoesDetalhes: checklistData.itemReviews,
       comentarios: comments,
-      tipos,
+      tipos: tiposRows.rows.map(row => row.nome),
     };
-
   } catch (error) {
     console.error("ERRO DETALHADO na função getRankingByPlaceId:", error);
     throw error;
@@ -310,12 +241,12 @@ async function getRankingByPlaceId(googlePlaceId) {
 
 // --- Outras Funções do Service ---
 async function findInMapBounds({ swLat, swLng, neLat, neLng }) {
-  const boundingBox = `POLYGON((${swLng} ${swLat}, ${neLng} ${swLat}, ${neLng} ${neLat}, ${swLng} ${neLat}, ${swLng} ${swLat}))`;
   const sql = `
-    SELECT id, nome, google_place_id, ST_X(localizacao) as longitude, ST_Y(localizacao) as latitude 
-    FROM Estabelecimentos WHERE MBRContains(ST_GeomFromText(?), localizacao) LIMIT 100;`;
-  
-  const [rows] = await pool.execute(sql, [boundingBox]);
+    SELECT id, nome, google_place_id, ST_X(localizacao::geometry) as longitude, ST_Y(localizacao::geometry) as latitude 
+    FROM "Estabelecimentos"
+    WHERE ST_Contains(ST_MakeEnvelope($1, $2, $3, $4, 4326), localizacao)
+    LIMIT 100;`;
+  const { rows } = await pool.query(sql, [swLng, swLat, neLng, neLat]);
   return rows;
 }
 

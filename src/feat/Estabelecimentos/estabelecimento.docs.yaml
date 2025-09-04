@@ -1,0 +1,123 @@
+# src/feat/Estabelecimentos/estabelecimento.docs.yaml
+
+components:
+  schemas:
+    Estabelecimento:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: O ID interno do estabelecimento.
+        google_place_id:
+          type: string
+          description: O ID único do Google para o local.
+        nome:
+          type: string
+          description: Nome do estabelecimento.
+        endereco:
+          type: string
+          description: Endereço completo do estabelecimento.
+      example:
+        id: 1
+        google_place_id: "ChIJW_45gYyuE2sR3iW63p_9Z7s"
+        nome: "Mercado Central de Fortaleza"
+        endereco: "Av. Alberto Nepomuceno, 199 - Centro, Fortaleza - CE"
+
+    NovoEstabelecimento:
+      type: object
+      required: [google_place_id, nome, endereco, latitude, longitude]
+      properties:
+        google_place_id:
+          type: string
+        nome:
+          type: string
+        endereco:
+          type: string
+        latitude:
+          type: number
+          format: float
+        longitude:
+          type: number
+          format: float
+      example:
+        google_place_id: "ChIJW_45gYyuE2sR3iW63p_9Z7s"
+        nome: "Mercado Central de Fortaleza"
+        endereco: "Av. Alberto Nepomuceno, 199 - Centro, Fortaleza - CE"
+        latitude: -3.7259
+        longitude: -38.5229
+
+    RankingEstabelecimento:
+      type: object
+      properties:
+        id:
+          type: integer
+        nome:
+          type: string
+        endereco:
+          type: string
+        scores:
+          type: array
+          items:
+            type: object
+            properties:
+              categoria:
+                type: string
+              score:
+                type: number
+                format: float
+
+tags:
+  - name: Estabelecimentos
+    description: Gerenciamento de estabelecimentos e consulta de rankings de acessibilidade.
+
+paths:
+  /api/estabelecimentos:
+    post:
+      summary: Cadastra um novo estabelecimento
+      tags: [Estabelecimentos]
+      description: Rota geralmente usada internamente quando um usuário busca por um local que ainda não existe na base.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NovoEstabelecimento'
+      responses:
+        '201':
+          description: Estabelecimento criado com sucesso.
+        '500':
+          description: Erro no servidor.
+
+    get:
+      summary: Lista todos os estabelecimentos cadastrados
+      tags: [Estabelecimentos]
+      responses:
+        '200':
+          description: Lista de estabelecimentos.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Estabelecimento'
+
+  /api/estabelecimentos/{google_place_id}:
+    get:
+      summary: Retorna os detalhes e o ranking de um estabelecimento
+      tags: [Estabelecimentos]
+      parameters:
+        - in: path
+          name: google_place_id
+          schema:
+            type: string
+          required: true
+          description: O ID do Google Places do estabelecimento.
+      responses:
+        '200':
+          description: Detalhes e ranking do estabelecimento.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RankingEstabelecimento'
+        '404':
+          description: Estabelecimento não encontrado na base de dados.

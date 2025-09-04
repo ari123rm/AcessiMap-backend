@@ -1,0 +1,106 @@
+# src/feat/Categorias_Acessibilidade/categoria.docs.yaml
+
+tags:
+  - name: Categorias
+    description: API para gerenciamento de Categorias de Acessibilidade
+
+paths:
+  /api/categorias:
+    post:
+      summary: Cria uma nova categoria
+      tags: [Categorias]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nome:
+                  type: string
+              example:
+                nome: "Visual"
+      responses:
+        '201':
+          description: Categoria criada com sucesso.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Categoria' # Referencia o schema global
+        '500':
+          description: Erro no servidor.
+
+    get:
+      summary: Retorna a lista de todas as categorias
+      tags: [Categorias]
+      responses:
+        '200':
+          description: Lista de categorias retornada com sucesso.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Categoria'
+
+  /api/categorias/{id}:
+    get:
+      summary: Retorna uma categoria pelo seu ID
+      tags: [Categorias]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: integer
+          required: true
+          description: O ID da categoria.
+      responses:
+        '200':
+          description: Dados da categoria.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Categoria'
+        '404':
+          description: Categoria não encontrada.
+
+    put:
+      summary: Atualiza uma categoria pelo seu ID
+      tags: [Categorias]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: integer
+          required: true
+          description: O ID da categoria.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nome:
+                  type: string
+      responses:
+        '200':
+          description: Categoria atualizada com sucesso.
+        '404':
+          description: Categoria não encontrada.
+          
+    delete:
+      summary: Deleta uma categoria pelo seu ID
+      tags: [Categorias]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: integer
+          required: true
+          description: O ID da categoria.
+      responses:
+        '204':
+          description: Categoria deletada com sucesso (sem conteúdo).
+        '404':
+          description: Categoria não encontrada.

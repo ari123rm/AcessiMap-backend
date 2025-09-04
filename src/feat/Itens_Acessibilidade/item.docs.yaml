@@ -1,0 +1,97 @@
+# src/feat/Itens_Acessibilidade/item.docs.yaml
+
+components:
+  schemas:
+    Item:
+      type: object
+      properties:
+        id:
+          type: integer
+        nome:
+          type: string
+        peso:
+          type: integer
+        id_categoria:
+          type: integer
+      example:
+        id: 1
+        nome: "Rampa de acesso"
+        peso: 5
+        id_categoria: 1
+
+    ItemComCategoria:
+      type: object
+      properties:
+        id:
+          type: integer
+        nome:
+          type: string
+        peso:
+          type: integer
+        categoria_nome:
+          type: string
+      example:
+        id: 1
+        nome: "Rampa de acesso"
+        peso: 5
+        categoria_nome: "Mobilidade"
+
+tags:
+  - name: Itens
+    description: Gerenciamento dos itens de acessibilidade que podem ser avaliados.
+
+paths:
+  /api/itens:
+    post:
+      summary: Cria um novo item de acessibilidade (Admin)
+      tags: [Itens]
+      security:
+        - bearerAuth: [] # Rota protegida
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nome:
+                  type: string
+                id_categoria:
+                  type: integer
+                peso:
+                  type: integer
+              example:
+                nome: "Cardápio em Braille"
+                id_categoria: 2
+                peso: 4
+      responses:
+        '201':
+          description: Item criado com sucesso.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        '401':
+          description: Não autorizado.
+
+    get:
+      summary: Lista todos os itens de acessibilidade
+      tags: [Itens]
+      parameters:
+        - in: query
+          name: id_categoria
+          schema:
+            type: integer
+          description: Filtra os itens por uma categoria específica.
+      responses:
+        '200':
+          description: Lista de itens.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ItemComCategoria'
+
+  # Adicione aqui as rotas para GET (by id), PUT e DELETE para /api/itens/{id}
+  # seguindo o mesmo padrão do CRUD de Categorias, se precisar delas.

@@ -1,0 +1,33 @@
+# src/feat/Avaliacoes/avaliacao.docs.yaml
+
+tags:
+  - name: Avaliacoes
+    description: Endpoints para registrar avaliações de acessibilidade
+
+paths:
+  /api/avaliacoes:
+    post:
+      summary: Cria uma nova avaliação (Rota Protegida)
+      tags: [Avaliacoes]
+      security:
+        - bearerAuth: [] # <-- Indica que a rota é protegida
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id_estabelecimento:
+                  type: integer
+                id_item_acessibilidade:
+                  type: integer
+                possui_item:
+                  type: boolean
+      responses:
+        '201':
+          description: Avaliação criada com sucesso
+        '401':
+          description: Não autorizado (token inválido ou não fornecido)
+
+  # Adicione aqui outros endpoints de avaliações, se houver...

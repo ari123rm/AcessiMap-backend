@@ -192,7 +192,7 @@ const connection = await pool.connect();
       const sqlTipos = `SELECT t.nome FROM "Tipos" t JOIN "Estabelecimento_Tipos" et ON t.id = et.id_tipo WHERE et.id_estabelecimento = $1`;
       const { rows: tiposRows } = await connection.query(sqlTipos, [estabelecimento.id]);
       estabelecimento.tipos = tiposRows.map(row => row.nome);
-      return {estabelecimento, scores: [], comentarios: [], tipos: [], totalAvaliacoes: 0};
+      return {...estabelecimento, scores: [], comentarios: [], tipos: [], totalAvaliacoes: 0};
     }
 
     // Busca os tipos de um estabelecimento já existente

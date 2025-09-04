@@ -60,5 +60,4 @@ const startServer = async () => {
   });
 };
 
-// 3. Inicia o processo
 startServer();

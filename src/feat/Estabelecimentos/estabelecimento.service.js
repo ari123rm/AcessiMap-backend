@@ -1,7 +1,6 @@
 const { pool } = require('../../config/db');
 const axios = require('axios');
 
-// --- FUNÇÕES AJUDANTES (HELPERS) ---
 
 async function _findOrCreateEstablishment(connection, googlePlaceId) {
   const sqlSelect = `
@@ -11,10 +10,10 @@ async function _findOrCreateEstablishment(connection, googlePlaceId) {
   let { rows } = await connection.query(sqlSelect, [googlePlaceId]);
 
   if (rows.length > 0) {
-    return rows[0];
+    return { ...rows[0], isNew: false };
   }
 
-  console.log(`Estabelecimento ${googlePlaceId} não encontrado no DB. Buscando no Google...`);
+  // Logic for creating a new establishment
   const googleApiUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${googlePlaceId}&fields=name,formatted_address,geometry,photos,types&key=${process.env.GOOGLE_API_KEY}&language=pt-BR`;
   const response = await axios.get(googleApiUrl);
   const placeDetails = response.data.result;
@@ -23,6 +22,8 @@ async function _findOrCreateEstablishment(connection, googlePlaceId) {
   const { name, formatted_address, geometry, types } = placeDetails;
   const { lat, lng } = geometry.location;
   const photoRef = placeDetails.photos?.[0]?.photo_reference || null;
+
+
   
   await connection.query('BEGIN');
   try {
@@ -34,9 +35,7 @@ async function _findOrCreateEstablishment(connection, googlePlaceId) {
     const result = await connection.query(sqlInsert, [googlePlaceId, name, formatted_address, lng, lat, photoRef]);
     const estabelecimentoId = result.rows[0].id;
 
-    if (types && types.length > 0) {
-      // Este mapa de tradução agora está preenchido
-      const priorityTypes = {
+    const priorityTypes = {
         'restaurant': 'Restaurante',
         'shopping_mall': 'Shopping',
         'cafe': 'Café',
@@ -55,7 +54,8 @@ async function _findOrCreateEstablishment(connection, googlePlaceId) {
         'establishment': 'Estabelecimento'
       };
 
-      const nossosTipos = new Set();
+    const nossosTipos = new Set();
+    if (types && types.length > 0) {
       for (const googleType of types) {
         if (priorityTypes[googleType]) nossosTipos.add(priorityTypes[googleType]);
       }
@@ -68,12 +68,23 @@ async function _findOrCreateEstablishment(connection, googlePlaceId) {
     }
     await connection.query('COMMIT');
     
-    const { rows: finalRows } = await connection.query(sqlSelect, [googlePlaceId]);
-    return { ...finalRows[0], isNew: true };
-
+    // Return the newly created object with all necessary
+    //  data
+    console.log(photoRef)
+    
+    return {
+      id: estabelecimentoId,
+      nome: name,
+      endereco: formatted_address,
+      google_place_id: googlePlaceId,
+      photo_reference: photoRef,
+      latitude: lat,
+      longitude: lng,
+      isNew: true,
+      tipos: [...nossosTipos],
+    };
   } catch (error) {
     await connection.query('ROLLBACK');
-    console.error("Erro na transação de criação de estabelecimento:", error);
     throw error;
   }
 }
@@ -182,28 +193,38 @@ async function _getTotalReviewers(connection, estabelecimentoId) {
 // --- FUNÇÃO PRINCIPAL (ORQUESTRADORA) ---
 
 async function getRankingByPlaceId(googlePlaceId) {
-const connection = await pool.connect();
+ const connection = await pool.connect();
+
   try {
+    
     const estabelecimento = await _findOrCreateEstablishment(connection, googlePlaceId);
+
+       //const photoUrl = estabelecimento.photo_reference ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${estabelecimento.photo_reference}&key=${process.env.GOOGLE_API_KEY}`: null
+
+      const photoUrl = `https://lh3.googleusercontent.com/place-photos/AJnk2cwd_ledODlMpnG4obt7w9WEmDwhqeDO1PYXtoP2gUynKzIMu9ICADSjwXvp310C_CHf-UJgsC4cAZQgDofNYT64ciNPQqvzsHD3PsY6Vbf6nlFYhFPTwAf8iKvVU_VMUWvd75tS1dmYVlANf5w=s1600-w400`;
+
+    
 
     if (estabelecimento.isNew) {
       delete estabelecimento.isNew;
-      // Precisamos buscar os tipos recém-criados para enviar de volta
-      const sqlTipos = `SELECT t.nome FROM "Tipos" t JOIN "Estabelecimento_Tipos" et ON t.id = et.id_tipo WHERE et.id_estabelecimento = $1`;
-      const { rows: tiposRows } = await connection.query(sqlTipos, [estabelecimento.id]);
-      estabelecimento.tipos = tiposRows.map(row => row.nome);
-      return {...estabelecimento, scores: [], comentarios: [], tipos: [], totalAvaliacoes: 0};
+      return {
+        ...estabelecimento,
+        photoUrl, 
+        meucu:10,
+        scores: [],
+        avaliacoesDetalhes: [],
+        comentarios: [],
+        totalAvaliacoes: 1,
+      };
     }
 
-    // Busca os tipos de um estabelecimento já existente
     const sqlTipos = `SELECT t.nome FROM "Tipos" t JOIN "Estabelecimento_Tipos" et ON t.id = et.id_tipo WHERE et.id_estabelecimento = $1`;
-
     const [checklistData, communityRatings, comments, totalReviewers, tiposRows] = await Promise.all([
       _getChecklistData(connection, estabelecimento.id),
       _getCommunityRatings(connection, estabelecimento.id),
       _getComments(connection, estabelecimento.id),
       _getTotalReviewers(connection, estabelecimento.id),
-      connection.query(sqlTipos, [estabelecimento.id]) // Adiciona a busca de tipos ao Promise.all
+      connection.query(sqlTipos, [estabelecimento.id])
     ]);
     const scoresCombinados = checklistData.scoresFinais.map(score => {
       const notaEncontrada = communityRatings.find(n => n.id_categoria === score.id_categoria);
@@ -219,8 +240,6 @@ const connection = await pool.connect();
         tooltipData: { items: tooltipItems }
       };
     });
-
-    const photoUrl = estabelecimento.photo_reference ? `...` : null;
 
     return {
       ...estabelecimento,

@@ -214,7 +214,7 @@ async function getRankingByPlaceId(googlePlaceId) {
         scores: [],
         avaliacoesDetalhes: [],
         comentarios: [],
-        totalAvaliacoes: 1,
+        totalAvaliacoes: 0,
       };
     }
 
